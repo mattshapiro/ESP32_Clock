@@ -39,48 +39,86 @@ char * msgbuffer;
 
 enum {
   CLOCK_MODE = 0,
-  MESSAGE_MODE
+  MESSAGE_MODE,
+  SSID_MODE,
+  PASSWORD_MODE
 } DisplayMode;
 
 AsyncWebServer server(80);
 
 const char* ssid = "ESP32-MsgBanner"; // Your WiFi SSID
 const char* password = "0987654321";  // Your WiFi Password
-const char* externalSSID = "Castle Clementine";         
-const char* externalPassword = "Kr15t1na";
+char externalSSID[256];         
+char externalPassword[64];
 struct tm startTime;
 long lastMillis;
 int hour, minute, sec;
-bool isAm = true;
+bool isAm = true,
+  clockInit = false;
 int displayMode;
 
 MD_Parola Display = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 void recvMsg(uint8_t *data, size_t len){
-
-  if(displayMode == CLOCK_MODE) displayMode = MESSAGE_MODE;
-
+  
   WebSerial.println("Received Data...");
   String d = "";
+  bool clockCmdReveived = false;
   len = (len < 256) ? len : 256;
   for(int i=0; i < len; i++){
     d += char(data[i]);
   }
-  WebSerial.println(d);
-  Display.displayClear();
-  strcpy(msgbuffer, d.c_str());
-  Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 150);
+
+  clockCmdReveived = (strcmp(d.c_str(), "CLOCK") == 0);
+
+  if(clockCmdReveived) {
+    WebSerial.println("Enter SSID");
+    displayMode = SSID_MODE;
+  } else if (displayMode == SSID_MODE) {
+    WebSerial.println("Enter Password");
+    displayMode = PASSWORD_MODE;
+    strcpy(externalSSID, d.c_str());
+  } else if (displayMode == PASSWORD_MODE) {
+    WebSerial.println("Syncing Clock...");
+    strcpy(externalPassword, d.c_str());
+    displayMode = CLOCK_MODE;
+    //disconnect WiFi for banner messages
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    initializeClock();
+  } else {
+    displayMode = MESSAGE_MODE;
+    WebSerial.println(d);
+    Display.displayClear();
+    strcpy(msgbuffer, d.c_str());
+    Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 150);
+  }
 }
 
 void initializeClock() {
   // Connect to Wi-Fi
   Serial.print("Connecting to ");
   Serial.println(externalSSID);
+  Serial.print("Password: ");
+  Serial.println(externalPassword);
   WiFi.begin(externalSSID, externalPassword);
-  while (WiFi.status() != WL_CONNECTED) {
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 50) {
     delay(500);
     Serial.print(".");
+    retry++;
   }
+
+  if(retry >= 50) {
+    Serial.println("Wifi Connection error check credentials");
+    Display.print("Wifi Err");
+    //disconnect WiFi as it's no longer needed
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    setupServer();
+    return;
+  }
+
   Serial.println("");
   Serial.println("WiFi connected.");
 
@@ -89,10 +127,13 @@ void initializeClock() {
 
   if(!getLocalTime(&startTime)){
     Serial.println("Failed to obtain time");
+    Display.print("Sync Err");
   } else {
     hour = startTime.tm_hour;
     if(hour > 12) {
       hour = hour - 12;
+    }
+    if(hour >= 12) {
       isAm = false;
     }
     minute = startTime.tm_min;
@@ -100,11 +141,13 @@ void initializeClock() {
     Serial.println("time got");
     Serial.println(&startTime, "%A, %B %d %Y %H:%M:%S");
     lastMillis = millis();
+    clockInit = true;
   }
-
   //disconnect WiFi as it's no longer needed
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+
+  setupServer(); // resume comms for banner message
 }
 
 void setupServer() {
@@ -112,7 +155,7 @@ void setupServer() {
   
   WiFi.softAP(ssid, password);
 
-  strcpy(msgbuffer, WiFi.softAPIP().toString().c_str());
+  if(displayMode != CLOCK_MODE) strcpy(msgbuffer, WiFi.softAPIP().toString().c_str());
 
   Serial.print("IP Address: ");
   Serial.println(msgbuffer);
@@ -126,17 +169,13 @@ void setupServer() {
 void setup() {
   Serial.begin(115200);
 
-  displayMode = CLOCK_MODE;
+  displayMode = MESSAGE_MODE;
 
   Display.begin();
   Display.setIntensity(0);
   Display.displayClear();
 
   msgbuffer = (char*)malloc(MAX_MSG_LEN*sizeof(char));
-  strcpy(msgbuffer,(const char*) "00");
-  initializeClock();
-  updateTime();
-  //delay(1500);
   setupServer();
 }
 
@@ -145,7 +184,7 @@ void loop() {
     Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 100);
     Display.displayReset();
   }
-  updateTime();
+  if(clockInit) updateTime();
 }
 
 void updateTime() {
@@ -161,9 +200,11 @@ void updateTime() {
       if(minute == 60) {
         minute = 0;
         hour++;
+        if(hour == 12) {
+          isAm = !isAm;
+        }
         if(hour == 13) {
           hour = 1;
-          isAm = !isAm;
         }
       }
     }
