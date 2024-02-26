@@ -85,6 +85,7 @@ void recvMsg(uint8_t *data, size_t len){
     //disconnect WiFi for banner messages
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
+    delay(1000);
     initializeClock();
   } else {
     displayMode = MESSAGE_MODE;
@@ -130,11 +131,11 @@ void initializeClock() {
     Display.print("Sync Err");
   } else {
     hour = startTime.tm_hour;
-    if(hour > 12) {
-      hour = hour - 12;
-    }
     if(hour >= 12) {
       isAm = false;
+      if(hour > 12) {
+        hour = hour - 12;
+      }
     }
     minute = startTime.tm_min;
     sec = startTime.tm_sec;
@@ -155,7 +156,15 @@ void setupServer() {
   
   WiFi.softAP(ssid, password);
 
-  if(displayMode != CLOCK_MODE) strcpy(msgbuffer, WiFi.softAPIP().toString().c_str());
+  if(displayMode != CLOCK_MODE) {
+    strcpy(msgbuffer, "SSID: ");
+    strcat(msgbuffer, ssid);
+    strcat(msgbuffer, " ... Pwd: ");
+    strcat(msgbuffer, password);
+    strcat(msgbuffer, " ... Site: ");
+    strcat(msgbuffer, WiFi.softAPIP().toString().c_str());
+    strcat(msgbuffer, "/webserial");
+  }
 
   Serial.print("IP Address: ");
   Serial.println(msgbuffer);
@@ -240,9 +249,6 @@ void updateTime() {
 #endif
 #ifdef DISPLAY_AMPM
     strcat(msgbuffer, isAm ? "AM" : "PM");
-#endif
-#ifdef DISPLAY_AP
-    strcat(msgbuffer, isAm ? "A" : "P");
 #endif
     //static text display is oogly
     textPosition_t alignment = isAm ? PA_LEFT : PA_RIGHT;
