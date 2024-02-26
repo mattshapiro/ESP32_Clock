@@ -59,17 +59,45 @@ int displayMode;
 
 MD_Parola Display = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
+void setup() {
+  Serial.begin(115200);
+
+  displayMode = MESSAGE_MODE;
+
+  Display.begin();
+  Display.setIntensity(0);
+  Display.displayClear();
+
+  msgbuffer = (char*)malloc(MAX_MSG_LEN*sizeof(char));
+  setupServer();
+}
+
+void loop() {
+  if(displayMode == MESSAGE_MODE && Display.displayAnimate()) {
+    Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 100);
+    Display.displayReset();
+  }
+  if(clockInit) updateTime();
+}
+
+// message received via webserial
 void recvMsg(uint8_t *data, size_t len){
-  
   WebSerial.println("Received Data...");
   String d = "";
-  bool clockCmdReveived = false;
   len = (len < 256) ? len : 256;
   for(int i=0; i < len; i++){
     d += char(data[i]);
   }
 
-  clockCmdReveived = (strcmp(d.c_str(), "CLOCK") == 0);
+  messageAction(d);
+}
+
+// parse message & perform action
+// ***"CLOCK" command triggers clock mode (first run will prompt for a Wifi SSID & Password to sync with NTP server)***
+// ***all other messages passed directly to the display***
+void messageAction(String msg) {
+  const char * msgstr = msg.c_str();
+  const bool clockCmdReveived = (strcmp(msgstr, "CLOCK") == 0);
 
   if(clockCmdReveived) {
     WebSerial.println("Enter SSID");
@@ -77,10 +105,10 @@ void recvMsg(uint8_t *data, size_t len){
   } else if (displayMode == SSID_MODE) {
     WebSerial.println("Enter Password");
     displayMode = PASSWORD_MODE;
-    strcpy(externalSSID, d.c_str());
+    strcpy(externalSSID, msgstr);
   } else if (displayMode == PASSWORD_MODE) {
     WebSerial.println("Syncing Clock...");
-    strcpy(externalPassword, d.c_str());
+    strcpy(externalPassword, msgstr);
     displayMode = CLOCK_MODE;
     //disconnect WiFi for banner messages
     WiFi.disconnect(true);
@@ -89,13 +117,14 @@ void recvMsg(uint8_t *data, size_t len){
     initializeClock();
   } else {
     displayMode = MESSAGE_MODE;
-    WebSerial.println(d);
+    WebSerial.println(msg);
     Display.displayClear();
-    strcpy(msgbuffer, d.c_str());
+    strcpy(msgbuffer, msgstr);
     Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 150);
   }
 }
 
+// sync clock to NTP server over Wifi
 void initializeClock() {
   // Connect to Wi-Fi
   Serial.print("Connecting to ");
@@ -114,7 +143,7 @@ void initializeClock() {
     Serial.println("Wifi Connection error check credentials");
     Display.print("Wifi Err");
     //disconnect WiFi as it's no longer needed
-    WiFi.disconnect(true);
+    //WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     setupServer();
     return;
@@ -151,6 +180,7 @@ void initializeClock() {
   setupServer(); // resume comms for banner message
 }
 
+// setup Wifi to host /webserial interface
 void setupServer() {
   pinMode(LED, OUTPUT);
   
@@ -175,27 +205,7 @@ void setupServer() {
   server.begin();
 }
 
-void setup() {
-  Serial.begin(115200);
-
-  displayMode = MESSAGE_MODE;
-
-  Display.begin();
-  Display.setIntensity(0);
-  Display.displayClear();
-
-  msgbuffer = (char*)malloc(MAX_MSG_LEN*sizeof(char));
-  setupServer();
-}
-
-void loop() {
-  if(displayMode == MESSAGE_MODE && Display.displayAnimate()) {
-    Display.displayScroll(msgbuffer,  PA_RIGHT, PA_SCROLL_LEFT, 100);
-    Display.displayReset();
-  }
-  if(clockInit) updateTime();
-}
-
+// increment & display time based on system clock
 void updateTime() {
   long delta = millis() - lastMillis;
   char h[3], m[3], s[3];
